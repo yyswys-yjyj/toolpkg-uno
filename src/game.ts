@@ -358,6 +358,15 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
   const kindForReveal: "draw2" | "wild4" = hasWild4 ? "wild4" : "draw2";
   const existingRev = state.pendingReveal;
   if (isPenaltyKind) {
+    // 关键：先检查出牌者手牌是否清空——若打出这手牌即获胜，直接判胜终止，不再走罚牌确认（防止"该赢了却卡在待确认"）
+    if (state.players[who].length === 0) {
+      state.winner = who;
+      state.pendingReveal = null;
+      state.history.push(msg);
+      state.history.push("" + (who === "ai" ? "AI" : "用户") + " 手牌清空，获胜！");
+      state.updated = Date.now();
+      return { ok: true, message: msg + "手牌清空获胜！", won: true };
+    }
     // 预取应罚张数
     const drew = peekDrawN(state, extra);
     if (existingRev && existingRev.kind === kindForReveal && existingRev.target === who) {
@@ -395,7 +404,7 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
 
   if (state.players[who].length === 0) {
     state.winner = who;
-    state.history.push("🎉 " + (who === "ai" ? "AI" : "用户") + " 手牌清空，获胜！");
+    state.history.push("" + (who === "ai" ? "AI" : "用户") + " 手牌清空，获胜！");
     return { ok: true, message: msg, won: true };
   }
   // 标准：skip/reverse/+2/+4 让对方被跳过（双人局连出）；普通牌才轮到对方

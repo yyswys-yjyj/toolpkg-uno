@@ -224,12 +224,19 @@ async function push(params) {
     var s = snapshot(res);
     s.result = true;
     s.aiWon = true;
-    return { success: true, message: "AI 出牌完成，AI 手牌清空获胜！🎉 现在用户输了，请用 XML 向用户展示战败结果。", ...s };
+    return { success: true, message: "AI 出牌完成，AI 手牌清空获胜！现在用户输了，请用 XML 向用户展示战败结果。", ...s };
   }
 
   await store.saveGame(res);
   var snap = snapshot(res);
-  var tail = r.pendingPenalty ? "现在用户被罚待处理，请发送 <uno> XML 让用户接招、质疑或认罚。" : "现在轮到用户出牌，请发送 <uno> XML 让用户操作。";
+  var tail;
+  if (r.pendingReveal) {
+    tail = "你出了罚牌，用户被打正待确认（可接招同类/认可/质疑）。请发送 <uno> XML 让用户处理罚牌。";
+  } else if (r.pendingPenalty) {
+    tail = "现在用户被罚待处理，请发送 <uno> XML 让用户接招、质疑或认罚。";
+  } else {
+    tail = "现在轮到用户出牌，请发送 <uno> XML 让用户操作。";
+  }
   return { success: true, message: r.message + "。" + tail, ...snap };
 }
 

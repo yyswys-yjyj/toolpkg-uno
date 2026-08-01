@@ -135,7 +135,7 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     // 若有用户附加消息，拼接进去一并发给 AI（附加发送后清空，避免重复）
     var attach = String(attachMsgState[0] || "").trim();
     if (attach) {
-      msg = msg + "\n📎 附加消息：" + attach;
+      msg = msg + "\n【附加消息】" + attach;
       attachMsgState[1]("");
     }
     try { await Tools.Chat.sendMessage(msg, chatId, undefined, undefined, { runtime: "main" }); } catch (e) {}
@@ -190,10 +190,10 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       await saveResult(r.message);
       return;
     }
-    var sentMsg = r.message + (r.won ? " 🎉 用户赢了！" : "");
+    var sentMsg = r.message + (r.won ? " 用户赢了！" : "");
     // ⭐ UNO!：打完牌手牌剩最后 1 张时喊 UNO（标准规则）
     if (!r.won && st.players.user.length === 1) {
-      sentMsg += "  🎯 UNO!";
+      sentMsg += "  UNO!";
     }
     resultMsgState[1](sentMsg);
     await saveResult(sentMsg);
@@ -289,8 +289,8 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     chosenState[1]("{}");
     submittedState[1](true);
     // 若进入 pendingPenalty，保持提示
-    var sentMsg = r.message + (r.won ? " 🎉 用户赢了！" : "");
-    if (!r.won && st.players.user.length === 1) { sentMsg += "  🎯 UNO!"; }
+    var sentMsg = r.message + (r.won ? " 用户赢了！" : "");
+    if (!r.won && st.players.user.length === 1) { sentMsg += "  UNO!"; }
     resultMsgState[1](sentMsg);
     await saveResult(sentMsg);
   }
@@ -444,7 +444,7 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     st.updated = Date.now();
     if (st.players.user.length === 0) {
       st.winner = "user";
-      st.history.push("🎉 你手牌清空，获胜！");
+      st.history.push("手牌清空，获胜！");
       return { ok: true, message: msg, won: true };
     }
     // 标准规则：skip/reverse/+2/+4 会让对方被跳过，因此仍轮用户（连出）；普通牌才轮到 AI
@@ -461,7 +461,7 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       ctx.UI.TextField({
         value: attachMsgState[0] || "",
         onValueChange: function (newVal: string) { attachMsgState[1](newVal); },
-        placeholder: "给 AI 捎句话，例如：这局我可不会手软 😏",
+        placeholder: "给 AI 捎句话，例如：这局我可不会手软",
         singleLine: false,
         minLines: 2,
         maxLines: 5,
@@ -473,7 +473,10 @@ var attachMsgState = ctx.useState("_attachMsg", "");
 
 
   nodes.push(ctx.UI.Column({ spacing: 2, padding: { vertical: 4, horizontal: 4 } }, [
-    ctx.UI.Text({ text: "🎴 UNO 对战", style: "titleLarge", color: primary }),
+    ctx.UI.Row({ spacing: 6, verticalAlignment: "centerVertically" }, [
+      ctx.UI.Icon({ name: "style", size: 22, tint: primary }),
+      ctx.UI.Text({ text: "UNO 对战", style: "titleLarge", color: primary }),
+    ]),
     gameId ? ctx.UI.Text({ text: "对局 #" + gameId, style: "bodySmall", color: onSurfaceVariant }) : null,
   ]));
 
@@ -510,7 +513,10 @@ var attachMsgState = ctx.useState("_attachMsg", "");
   if (isOver) {
     var wonByUser = winner === "user";
     nodes.push(ctx.UI.Column({ spacing: 6, padding: { vertical: 8 } }, [
-      ctx.UI.Text({ text: wonByUser ? "🎉 用户赢了！" : "😔 AI 获胜了", style: "headlineSmall", color: wonByUser ? primary : errorColor }),
+      ctx.UI.Row({ spacing: 8, verticalAlignment: "centerVertically" }, [
+        ctx.UI.Icon({ name: wonByUser ? "celebration" : "sentiment_dissatisfied", size: 26, tint: wonByUser ? primary : errorColor }),
+        ctx.UI.Text({ text: wonByUser ? "用户赢了！" : "AI 获胜了", style: "headlineSmall", color: wonByUser ? primary : errorColor }),
+      ]),
       resultMsg ? ctx.UI.Text({ text: resultMsg, style: "bodyMedium", color: onSurface }) : null,
     ]));
     return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
@@ -570,7 +576,10 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       ]);
     }
     return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, [
-      ctx.UI.Text({ text: "🎴 UNO 对战", style: "titleLarge", color: primary }),
+      ctx.UI.Row({ spacing: 6, verticalAlignment: "centerVertically" }, [
+        ctx.UI.Icon({ name: "style", size: 22, tint: primary }),
+        ctx.UI.Text({ text: "UNO 对战", style: "titleLarge", color: primary }),
+      ]),
       ctx.UI.Column({ spacing: 8, padding: { vertical: 8 } }, [
         ctx.UI.Text({ text: (pending.source === "ai" ? "AI" : "用户") + " 打出了" + penKindLabel + "，你被罚抽 " + pending.amount + " 张", style: "titleMedium", color: errorColor }),
         ctx.UI.Text({ text: "以下是你将抽到的牌（仅你可看）：", style: "bodySmall", color: onSurfaceVariant }),
@@ -582,7 +591,10 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       ctx.UI.Button({ text: "确认（抽 " + pending.amount + " 张）", onClick: confirmReveal, containerColor: primary }),
       canChallenge ? ctx.UI.Button({ text: "质疑（+4）", onClick: handleChallenge, containerColor: errorColor }) : ctx.UI.Spacer({}),
     ]),
-      errorMsg ? ctx.UI.Text({ text: "⚠️ " + errorMsg, style: "bodySmall", color: errorColor }) : null,
+      errorMsg ? ctx.UI.Row({ spacing: 6, verticalAlignment: "centerVertically" }, [
+        ctx.UI.Icon({ name: "warning", size: 16, tint: errorColor }),
+        ctx.UI.Text({ text: errorMsg, style: "bodySmall", color: errorColor }),
+      ]) : null,
     ]);
   }
 
@@ -652,19 +664,25 @@ var attachMsgState = ctx.useState("_attachMsg", "");
 
   // 已出牌：出牌后优先展示（即使 currentTurn 已变）
   if (submitted) {
-    nodes.push(ctx.UI.Column({ spacing: 4 }, [
-      ctx.UI.Text({ text: "✅ 已出牌", style: "titleMedium", color: primary }),
-      resultMsg ? ctx.UI.Text({ text: resultMsg, style: "bodyMedium", color: onSurface }) : null,
-      ctx.UI.Text({ text: "本回合结束，等待 AI 出牌...", style: "bodySmall", color: onSurfaceVariant }),
-    ]));
-    return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
+nodes.push(ctx.UI.Column({ spacing: 4 }, [
+  ctx.UI.Row({ spacing: 6, verticalAlignment: "centerVertically" }, [
+    ctx.UI.Icon({ name: "check_circle", size: 20, tint: primary }),
+    ctx.UI.Text({ text: "已出牌", style: "titleMedium", color: primary }),
+  ]),
+  resultMsg ? ctx.UI.Text({ text: resultMsg, style: "bodyMedium", color: onSurface }) : null,
+  ctx.UI.Text({ text: "本回合结束，等待 AI 出牌...", style: "bodySmall", color: onSurfaceVariant }),
+]));
+return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
   }
 
   // 非用户回合
   if (!isUserTurn) {
-    nodes.push(ctx.UI.Text({ text: "⏳ 等待 AI 出牌...", style: "bodyMedium", color: onSurfaceVariant }));
-    return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
-  }
+nodes.push(ctx.UI.Row({ spacing: 6, verticalAlignment: "centerVertically" }, [
+  ctx.UI.Icon({ name: "hourglass_empty", size: 18, tint: onSurfaceVariant }),
+  ctx.UI.Text({ text: "等待 AI 出牌...", style: "bodyMedium", color: onSurfaceVariant }),
+]));
+return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
+}
 
   // 用户出牌区
   nodes.push(ctx.UI.Text({ text: "选择你要打出的卡牌（可同色/同数字多选）", style: "labelLarge", color: onSurface }));
@@ -688,8 +706,11 @@ var attachMsgState = ctx.useState("_attachMsg", "");
   nodes.push(ctx.UI.LazyRow({ spacing: 6, padding: { vertical: 8 } }, handNodes));
 
   if (errorMsg) {
-    nodes.push(ctx.UI.Text({ text: "⚠️ " + errorMsg, style: "bodySmall", color: errorColor }));
-  }
+nodes.push(ctx.UI.Row({ spacing: 6, verticalAlignment: "centerVertically" }, [
+  ctx.UI.Icon({ name: "warning", size: 16, tint: errorColor }),
+  ctx.UI.Text({ text: errorMsg, style: "bodySmall", color: errorColor }),
+]));
+}
 
 nodes.push(renderAttachBox());
     nodes.push(ctx.UI.Row({ spacing: 8, padding: { vertical: 8 } }, [

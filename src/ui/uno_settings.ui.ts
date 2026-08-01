@@ -57,9 +57,12 @@ export default function Screen(ctx: any): any {
 
   var nodes: any[] = [];
   nodes.push(ctx.UI.Column({ spacing: 2, padding: { vertical: 4, horizontal: 4 } }, [
-    ctx.UI.Text({ text: "🎴 UNO 规则设置", style: "titleLarge", color: primary }),
-    ctx.UI.Text({ text: "设置影响之后新创建的对局；进行中的对局使用创建时的规则快照。", style: "bodySmall", color: onSurfaceVariant }),
-  ]));
+  ctx.UI.Row({ spacing: 6, verticalAlignment: "centerVertically" }, [
+    ctx.UI.Icon({ name: "style", size: 22, tint: primary }),
+    ctx.UI.Text({ text: "UNO 规则设置", style: "titleLarge", color: primary }),
+  ]),
+  ctx.UI.Text({ text: "设置影响之后新创建的对局；进行中的对局使用创建时的规则快照。", style: "bodySmall", color: onSurfaceVariant }),
+]));
 
   nodes.push(
     ctx.UI.Card({ fillMaxWidth: true, containerColor: surfaceVariant }, [
