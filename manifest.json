@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.uno",
+  "version": "1.0.0",
+  "author": ["yyswys-yjyj"],
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "UNO 卡牌对战",
+    "en": "UNO Card Game"
+  },
+  "description": {
+    "zh": "在 Operit 中与 AI 对玩 UNO 卡牌游戏。AI 通过工具出牌，用户通过界面选择卡牌或放弃。全状态由 JSON 在 cleanOnExit/uno 目录控制。",
+    "en": "Play UNO card game with AI in Operit. The AI plays via tools, the user plays via the UI. Full state is JSON-controlled under cleanOnExit/uno."
+  },
+  "enabled_by_default": false,
+  "subpackages": [
+    {
+      "id": "uno",
+      "entry": "dist/uno.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "UNO",
+        "en": "UNO"
+      },
+      "description": {
+        "zh": "UNO 卡牌对战工具：提供游戏实例管理、出牌、查看手牌、弃牌抽牌等工具。",
+        "en": "UNO card game tools: game instance management, card play, hand viewing, and draw/abandon tools."
+      }
+    }
+  ]
+}
