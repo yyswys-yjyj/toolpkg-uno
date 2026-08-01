@@ -1,3 +1,15 @@
-# toolpkg-uno
+# UNO 卡牌对战
+让AI和你在Operit AI中玩UNO卡牌！
 
-[Operit AI Toolpkg]让AI在 Operit AI中和你玩UNO
+## 介绍
+### 自定义规则
+你可以通过规则设置页面，配置UNO规则，是官方规则还是变体由你来定
+
+### 实例隔离
+每个游戏实例都是隔离的，并且在你退出Operit AI后实例也会自动销毁
+
+### 万千对局
+用户通过UI进行出牌，AI通过工具进行出牌，来来回回对个几百局都不是问题
+
+## 开源
+仓库地址：https://github.com/yyswys-yjyj/toolpkg-uno （本仓库）
