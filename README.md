@@ -12,5 +12,5 @@
 用户通过UI进行出牌，AI通过工具进行出牌，来来回回对个几百局都不是问题
 
 ## 开源
-仓库地址：https://github.com/yyswys-yjyj/toolpkg-uno
+仓库地址：https://github.com/yyswys-yjyj/toolpkg-uno   
 镜像：https://git.repo.archive.serveryyswys.top/yyswys-yjyj/toolpkg-uno
