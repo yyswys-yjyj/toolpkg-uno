@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.uno",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": ["yyswys-yjyj"],
   "main": "dist/main.js",
   "display_name": {

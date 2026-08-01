@@ -223,15 +223,6 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
     return { ok: false, message: "未选择任何卡牌", won: false };
   }
 
-  // ⚠️ pendingReveal 拦截：存在待确认罚牌时，只能先确认（+2）或确认/质疑（+4），不能正常出牌
-  const rev = state.pendingReveal;
-  if (rev) {
-    if (rev.target === who) {
-      return { ok: false, message: rev.challengeAllowed ? "正被罚 +4，请先确认或质疑" : "正被罚 +2，请先确认罚牌", won: false };
-    }
-    return { ok: false, message: rev.target === "user" ? "等待用户确认罚牌" : "等待 AI 确认罚牌", won: false };
-  }
-
   const cardsToPlay: Card[] = [];
   const seen = new Set<string>();
   for (const id of cardIds) {
@@ -240,6 +231,24 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
     if (seen.has(id)) return { ok: false, message: "重复选择卡牌: " + id, won: false };
     seen.add(id);
     cardsToPlay.push({ ...c });
+  }
+
+  // ⚠️ pendingReveal 拦截：存在待确认罚牌时，只能先确认（+2）或确认/质疑（+4）或「接招叠加」，不能随意出牌
+  const rev = state.pendingReveal;
+  if (rev) {
+    if (rev.target !== who) {
+      return { ok: false, message: rev.target === "user" ? "等待用户确认罚牌" : "等待 AI 确认罚牌", won: false };
+    }
+    // who 是待确认方（被打方）：
+    // 开启 stacking 且本次出的是「与罚牌同类型」→ 放行让下方接招累加处理；否则拦截要求先确认
+    const stk = !!(state.rules && state.rules.stacking);
+    const firstCard = cardsToPlay[0];
+    const sameKindPenalty = rev.kind === "draw2"
+      ? firstCard && firstCard.value === "draw2"
+      : firstCard && firstCard.value === "wild4";
+    if (!(stk && sameKindPenalty)) {
+      return { ok: false, message: rev.challengeAllowed ? "正被罚 +4，可接招同类 +4 反击，或确认/质疑" : "正被罚 +2，可接招同类 +2 反击，或确认罚牌", won: false };
+    }
   }
 
   // singleOnly：官方规则只能单张；false 才允许同色/同数字成组
@@ -254,6 +263,15 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
         if (c.color !== fc && c.value !== fv) {
           return { ok: false, message: "一次只能打出颜色或数字相同的成组牌", won: false };
         }
+      }
+      // 功能牌类型隔离：组内不能同时包含 +2 和 +4（+2 只能成组 +2，+4 只能成组 +4）
+      let hasD2 = false, hasW4 = false;
+      for (const c of cardsToPlay) {
+        if (c.value === "draw2") hasD2 = true;
+        else if (c.value === "wild4") hasW4 = true;
+      }
+      if (hasD2 && hasW4) {
+        return { ok: false, message: "功能牌无法混组：+2 与 +4 不能同时成组打出", won: false };
       }
     }
   }
@@ -271,13 +289,30 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
   let msg = (who === "ai" ? "AI 出牌：" : "用户出牌：") + cardsToPlay.map(cardLabel).join("、");
 
   let extra = 0;
-  let skipOpponent = false; // 对方是否被跳过
-  let isPenaltyKind = played.value === "draw2" || played.value === "wild4";
+  let skipOpponent = false; // 对方是否被跳过（罚牌/skip 叠加；reverse 奇偶抵消）
+  let isPenaltyKind = false; // 组内含 +2/+4
+  let hasWild4 = false;      // 组内含 +4（质疑判定用）
+  let skipCount = 0;         // 组内 skip 张数（始终叠加）
+  let reverseCount = 0;      // 组内 reverse 张数（双人局：奇数生效、偶数抵消）
+  let reverseBlocked = false; // 标记本次有 reverse 因抵消而不跳过
+  // 成组出牌：效果叠加法——统计各效果后按规则判定回合
+  for (const c of cardsToPlay) {
+    if (c.value === "draw2") { extra += 2; skipOpponent = true; isPenaltyKind = true; }
+    else if (c.value === "wild4") { extra += 4; skipOpponent = true; isPenaltyKind = true; hasWild4 = true; }
+    else if (c.value === "skip") { skipCount++; }
+    else if (c.value === "reverse") { reverseCount++; }
+  }
+  // reverse 奇偶抵消：偶数张 reverse 互相抵消（本轮不跳过）；奇数张才生效
+  if (reverseCount % 2 === 1) skipOpponent = true;
+  else if (reverseCount > 0) reverseBlocked = true;
+  if (skipCount > 0) skipOpponent = true;
+  let penaltyCount = 0; // 组内罚牌张数（用于消息文案）
+  for (const c of cardsToPlay) { if (c.value === "draw2" || c.value === "wild4") penaltyCount++; }
 
   // 记录 lastAction（质疑用）
   const origLast: LastAction = { kind: "none", prevActiveColor, source: who, hadMatch: false };
   // 出 wild4 后，检查出牌者剩余手牌是否含前生效色（质疑判定依据）
-  if (played.value === "wild4") {
+  if (hasWild4) {
     const hasMatch = state.players[who].some((c) => c.color === prevActiveColor);
     origLast.kind = "wild4";
     origLast.hadMatch = hasMatch;
@@ -305,17 +340,22 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
     state.activeColor = played.color;
   }
 
-  if (played.value === "draw2") { extra = 2; skipOpponent = true; }
-  if (played.value === "wild4") { extra = 4; skipOpponent = true; }
-  if (played.value === "skip") { skipOpponent = true; msg += "，跳过" + (opponent === "user" ? "用户" : "AI") + "回合"; }
-  if (played.value === "reverse") { skipOpponent = true; msg += "，反转（双人局视为跳过对方回合）"; }
+  // 成组出牌效果叠加：extra 已在上面累加；此处拼接叠加文案
   if (isPenaltyKind) {
     msg += "，" + (opponent === "user" ? "用户" : "AI") + " 被罚抽 " + extra + " 张";
+    if (penaltyCount > 1) msg += "（" + penaltyCount + " 张罚牌叠加）";
+  }
+  // 跳过/反转（当对方被跳过）
+  if (skipOpponent) {
+    msg += "，跳过" + (opponent === "user" ? "用户" : "AI") + "回合";
+  } else if (reverseBlocked) {
+    // 反转偶数张互相抵消：方向回到原点 = 正常轮到对方
+    msg += "，反转抵消（方向回到原位）";
   }
 
   // ⭐ +2/+4 → 预取牌进 pendingReveal（暂不真罚，被打方确认才执法；+4 可质疑）
   // 若存在既有 pendingReveal 且本次是同类型罚牌（stacking 接招），累加预取
-  const kindForReveal: "draw2" | "wild4" = played.value === "draw2" ? "draw2" : "wild4";
+  const kindForReveal: "draw2" | "wild4" = hasWild4 ? "wild4" : "draw2";
   const existingRev = state.pendingReveal;
   if (isPenaltyKind) {
     // 预取应罚张数

@@ -65,7 +65,9 @@ export default function Screen(ctx: any) {
   var chatIdState = ctx.useState("_chatId", "");
   var submittedState = ctx.useState("_submitted", false);
   var resultMsgState = ctx.useState("_resultMsg", "");
-  var errorMsgState = ctx.useState("_errorMsg", "");
+var errorMsgState = ctx.useState("_errorMsg", "");
+// 消息附加：用户在出牌/罚牌时附加的一段话，随动作发给 AI 查看
+var attachMsgState = ctx.useState("_attachMsg", "");
   var chosenState = ctx.useState("_chosen", "{}");
   // abd 中间态：记录用户放弃后抽到的牌（仅用户可见，点"继续"后才发消息、明牌不出）
   var abandonDrawnState = ctx.useState("_abandonDrawn", "null");
@@ -94,6 +96,8 @@ export default function Screen(ctx: any) {
   var submitted = submittedState[0];
   var resultMsg = resultMsgState[0];
   var errorMsg = errorMsgState[0];
+  // 消息附加：用户在出牌/罚牌时附加的一段话，随动作发给 AI
+  var attachMsg = String(attachMsgState[0] || "").trim();
   // 抽牌中间态：抽到的牌（仅用户可见）或 null
   var abandonDrawn: any = null;
   try { var ad = JSON.parse(abandonDrawnState[0] || "null"); abandonDrawn = ad ? ad : null; } catch (e) { abandonDrawn = null; }
@@ -128,6 +132,12 @@ export default function Screen(ctx: any) {
   }
 
   async function saveResult(msg: string) {
+    // 若有用户附加消息，拼接进去一并发给 AI（附加发送后清空，避免重复）
+    var attach = String(attachMsgState[0] || "").trim();
+    if (attach) {
+      msg = msg + "\n📎 附加消息：" + attach;
+      attachMsgState[1]("");
+    }
     try { await Tools.Chat.sendMessage(msg, chatId, undefined, undefined, { runtime: "main" }); } catch (e) {}
   }
 
@@ -317,6 +327,37 @@ export default function Screen(ctx: any) {
     await saveResult(r.message);
   }
 
+  // 用户接招叠加：用手里同类 +2/+4 反击（需开启 stacking，且与罚牌同类型）
+  async function stackReveal(cardId: string) {
+    if (submitted) return;
+    errorMsgState[1]("");
+    var path = "/storage/emulated/0/Download/Operit/cleanOnExit/uno/" + gameId + ".json";
+    var st: any = { players: { ai: [], user: [] }, pile: [], deck: [], activeColor: "", currentTurn: "user", winner: null };
+    try {
+      var raw = await ctx.callTool("read_file", { path: path });
+      var content = raw && (raw.content !== undefined ? raw.content : (raw.data && raw.data.content));
+      if (content) {
+        if (typeof content !== "string") content = JSON.stringify(content);
+        content = content.replace(/^\d+\|/gm, "");
+        st = JSON.parse(content);
+      }
+    } catch (e) {}
+    var revPending = st.pendingReveal;
+    if (!revPending || revPending.target !== "user") { errorMsgState[1]("当前不是待确认罚牌状态"); return; }
+    if (!st.rules || !st.rules.stacking) { errorMsgState[1]("未开启叠加规则，无法接招"); return; }
+    // 该牌须与罚牌同类型
+    var c = (st.players.user || []).find(function (h: any) { return h.id === cardId; });
+    if (!c) { errorMsgState[1]("卡牌不存在"); return; }
+    var sameKind = revPending.kind === "draw2" ? c.value === "draw2" : c.value === "wild4";
+    if (!sameKind) { errorMsgState[1]("只能接招「同类罚牌」"); return; }
+    var r = unoGame.playCards(st, "user", [cardId]);
+    if (!r.ok) { errorMsgState[1](r.message); return; }
+    await ctx.callTool("write_file", { path: path, content: JSON.stringify(st) }).catch(function(){});
+    submittedState[1](true);
+    resultMsgState[1](r.message);
+    await saveResult(r.message);
+  }
+
   // 用户质疑：仅当上一步是 AI 刚出 +4 时可质疑
   async function handleChallenge() {
     if (!isUserTurn || submitted) return;
@@ -381,10 +422,23 @@ export default function Screen(ctx: any) {
     } else {
       st.activeColor = played.color;
     }
-    if (played.value === "draw2") { extra = 2; skipAI = true; msg += "，AI 需罚抽 2 张并被跳过"; }
-    if (played.value === "wild4") { extra = 4; skipAI = true; msg += "，AI 需罚抽 4 张并被跳过"; }
-    if (played.value === "skip") { skipAI = true; msg += "，跳过 AI 回合"; }
-    if (played.value === "reverse") { skipAI = true; msg += "，反转"; }
+    // 成组出牌：效果叠加法——遍历整组累加 +2/+4 罚抽、跳过/反转叠加
+    var extra = 0;
+    var skipAI = false; // AI 是否被跳过（skip/reverse/+2/+4）
+    var isPen = false;
+    var penCount = 0;
+    for (var gi = 0; gi < cards.length; gi++) {
+      var gv = cards[gi].value;
+      if (gv === "draw2") { extra += 2; skipAI = true; isPen = true; penCount++; }
+      else if (gv === "wild4") { extra += 4; skipAI = true; isPen = true; penCount++; }
+      else if (gv === "skip") { skipAI = true; }
+      else if (gv === "reverse") { skipAI = true; } // 双人局 reverse 当跳过
+    }
+    if (isPen) {
+      msg += "，AI 需罚抽 " + extra + " 张并被跳过";
+      if (penCount > 1) msg += "（" + penCount + " 张罚牌叠加）";
+    }
+    if (skipAI && !isPen) msg += "，跳过 AI 回合";
     for (var e = 0; e < extra; e++) _drawOne(st, "ai");
     st.history = st.history || []; st.history.push(msg);
     st.updated = Date.now();
@@ -397,9 +451,26 @@ export default function Screen(ctx: any) {
     st.currentTurn = skipAI ? "user" : "ai";
     return { ok: true, message: msg, won: false };
   }
-
   // ── 渲染 ──
   var nodes: any[] = [];
+
+  // 消息附加组件：用户可填一段话随当前动作发给 AI 查看
+  function renderAttachBox() {
+    return ctx.UI.Column({ spacing: 4, fillMaxWidth: true }, [
+      ctx.UI.Text({ text: "消息附加（可选，随动作发给 AI）", style: "labelSmall", color: onSurfaceVariant }),
+      ctx.UI.TextField({
+        value: attachMsgState[0] || "",
+        onValueChange: function (newVal: string) { attachMsgState[1](newVal); },
+        placeholder: "给 AI 捎句话，例如：这局我可不会手软 😏",
+        singleLine: false,
+        minLines: 2,
+        maxLines: 5,
+        style: "compact",
+        fillMaxWidth: true,
+      }),
+    ]);
+  }
+
 
   nodes.push(ctx.UI.Column({ spacing: 2, padding: { vertical: 4, horizontal: 4 } }, [
     ctx.UI.Text({ text: "🎴 UNO 对战", style: "titleLarge", color: primary }),
@@ -445,10 +516,20 @@ export default function Screen(ctx: any) {
     return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
   }
 
-  // ⭐ 被打罚牌确认中间态：用户被打方需确认罚牌（+4 可质疑，+2 只确认）
+  // ⭐ 被打罚牌确认中间态：用户被打方需确认罚牌（+4 可质疑，+2 只确认；开启叠加时可接招同类罚牌反击）
   if (isUserPenalized) {
     var penKindLabel = pending.kind === "draw2" ? "+2" : "+4";
     var canChallenge = !!(pending.challengeAllowed && game && game.lastAction && game.lastAction.kind === "wild4" && game.lastAction.source === "ai");
+    // 叠加：stacking 开启时扫描用户手牌里与罚牌同类型的 +2/+4 牌，供接招反击
+    var stackingOn = !!(game && game.rules && game.rules.stacking);
+    var stackable: any[] = [];
+    if (stackingOn && myHand && myHand.length) {
+      for (var si = 0; si < myHand.length; si++) {
+        var sc = myHand[si];
+        if (pending.kind === "draw2" && sc.value === "draw2") stackable.push(sc);
+        else if (pending.kind === "wild4" && sc.value === "wild4") stackable.push(sc);
+      }
+    }
     // 展示预取的罚牌
     var revealCards: any[] = [];
     var drawAbles = pending.drawAbles || [];
@@ -468,6 +549,26 @@ export default function Screen(ctx: any) {
         }));
       })(rc);
     }
+    // 叠加按钮（可能多张，用 LazyRow 横向滚动包裹，避免按钮过多撑爆）
+    var stackBtn: any = null;
+    if (stackable.length > 0) {
+      var stackNodes: any[] = [];
+      for (var bi = 0; bi < stackable.length; bi++) {
+        (function (card) {
+          var sHex = _colorHex(card.color);
+          stackNodes.push(ctx.UI.Button({
+            key: "stack_" + card.id,
+            text: "使用 " + _cardLabel(card) + " 叠加",
+            onClick: function () { stackReveal(card.id); },
+            containerColor: _parseHex(sHex, 0.75),
+          }));
+        })(stackable[bi]);
+      }
+      stackBtn = ctx.UI.Column({ spacing: 6 }, [
+        ctx.UI.Text({ text: "可接招反击（用同类" + penKindLabel + "把罚抽甩回" + (pending.source === "ai" ? "AI" : "用户") + "）：", style: "bodySmall", color: onSurfaceVariant }),
+        ctx.UI.LazyRow({ spacing: 8, padding: { vertical: 4 } }, stackNodes),
+      ]);
+    }
     return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, [
       ctx.UI.Text({ text: "🎴 UNO 对战", style: "titleLarge", color: primary }),
       ctx.UI.Column({ spacing: 8, padding: { vertical: 8 } }, [
@@ -475,10 +576,12 @@ export default function Screen(ctx: any) {
         ctx.UI.Text({ text: "以下是你将抽到的牌（仅你可看）：", style: "bodySmall", color: onSurfaceVariant }),
       ]),
       ctx.UI.LazyRow({ spacing: 6, padding: { vertical: 6 } }, revealCards),
-      ctx.UI.Row({ spacing: 8, verticalAlignment: "centerVertically", padding: { vertical: 6 } }, [
-        ctx.UI.Button({ text: "确认（抽 " + pending.amount + " 张）", onClick: confirmReveal, containerColor: primary }),
-        canChallenge ? ctx.UI.Button({ text: "质疑（+4）", onClick: handleChallenge, containerColor: errorColor }) : ctx.UI.Spacer({}),
-      ]),
+      stackBtn,
+    renderAttachBox(),
+    ctx.UI.Row({ spacing: 8, verticalAlignment: "centerVertically", padding: { vertical: 6 } }, [
+      ctx.UI.Button({ text: "确认（抽 " + pending.amount + " 张）", onClick: confirmReveal, containerColor: primary }),
+      canChallenge ? ctx.UI.Button({ text: "质疑（+4）", onClick: handleChallenge, containerColor: errorColor }) : ctx.UI.Spacer({}),
+    ]),
       errorMsg ? ctx.UI.Text({ text: "⚠️ " + errorMsg, style: "bodySmall", color: errorColor }) : null,
     ]);
   }
@@ -588,14 +691,15 @@ export default function Screen(ctx: any) {
     nodes.push(ctx.UI.Text({ text: "⚠️ " + errorMsg, style: "bodySmall", color: errorColor }));
   }
 
-  nodes.push(ctx.UI.Row({ spacing: 8, padding: { vertical: 8 } }, [
-    ctx.UI.Button({ text: "出牌", onClick: handlePlay, containerColor: primary, enabled: !!isUserTurn && !submitted }),
-    ctx.UI.OutlinedButton({
-      content: ctx.UI.Text({ text: "放弃本轮（抽1张）", style: "labelLarge", color: onSurface }),
-      onClick: handleAbandon,
-      enabled: !!isUserTurn && !submitted,
-    }),
-  ]));
+nodes.push(renderAttachBox());
+    nodes.push(ctx.UI.Row({ spacing: 8, padding: { vertical: 8 } }, [
+      ctx.UI.Button({ text: "出牌", onClick: handlePlay, containerColor: primary, enabled: !!isUserTurn && !submitted }),
+      ctx.UI.OutlinedButton({
+        content: ctx.UI.Text({ text: "放弃本轮（抽1张）", style: "labelLarge", color: onSurface }),
+        onClick: handleAbandon,
+        enabled: !!isUserTurn && !submitted,
+      }),
+    ]));
 
   nodes.push(ctx.UI.Text({ text: "出牌后会自动结算并通知 AI 继续。", style: "labelSmall", color: onSurfaceVariant }));
 

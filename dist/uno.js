@@ -136,7 +136,7 @@
     ]
   },
   {
-    "name": "acceptwild4",
+    "name": "accept",
     "description": {
       "zh": "确认接受 +4 罚牌（对方刚出了 +4，你被打罚抽4）。确认后 4 张加入你手牌并跳过。accept 前可先 querywild4 或 challenge。",
       "en": "Accept the +4 penalty cards and draw 4."
@@ -287,10 +287,10 @@ async function querywild4(params) {
   if (!rev || rev.kind !== "wild4" || rev.target !== "ai") {
     return { success: false, message: "当前没有待 AI 确认的 +4 罚牌" };
   }
-  return { success: true, kind: "wild4", source: rev.source, drawAbles: rev.drawAbles || [], amount: rev.amount, message: "你被罚的4张牌如上，可用 acceptwild4 确认，或 challenge 质疑。" };
+  return { success: true, kind: "wild4", source: rev.source, drawAbles: rev.drawAbles || [], amount: rev.amount, message: "你被罚的4张牌如上，可用 accept 确认，或 challenge 质疑。" };
 }
 
-async function acceptwild4(params) {
+async function accept(params) {
   var res = await store.loadGame(String(params.gameId || "").trim());
   if (!res) return { success: false, message: "游戏实例不存在: " + params.gameId };
   if (res.winner) return { success: false, message: "游戏已结束", winner: res.winner };
@@ -337,7 +337,7 @@ exports.stop = wrap(stop);
 exports.getconfig = wrap(getconfig);
 exports.challenge = wrap(challenge);
 exports.querywild4 = wrap(querywild4);
-exports.acceptwild4 = wrap(acceptwild4);
+exports.accept = wrap(accept);
 exports.guide = wrap(async function () {
   return { success: false, message: "无需调用此工具，直接输出 <uno> 标签触发界面" };
 });
