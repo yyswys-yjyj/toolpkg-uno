@@ -251,17 +251,24 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
     }
   }
 
-  // singleOnly：官方规则只能单张；false 才允许同色/同数字成组
+  // singleOnly：官方规则只能单张；false 才允许同色成组（强调：必须同色，不能仅同数字不同色）
   if (rules.singleOnly) {
     if (cardsToPlay.length > 1) {
       return { ok: false, message: "官方规则：一次只能打出一张牌", won: false };
     }
   } else {
     if (cardsToPlay.length > 1) {
-      const fc = cardsToPlay[0].color, fv = cardsToPlay[0].value;
+      // 万能牌不能与其他任何牌成组：万能牌混入即成组非法，只能单独出一张
+      const hasWildCard = cardsToPlay.some((c) => c.color === "wild");
+      if (hasWildCard) {
+        return { ok: false, message: "万能牌不能与其他牌成组，只能单独打出", won: false };
+      }
+      const fc = cardsToPlay[0].color;
+      const fv = cardsToPlay[0].value;
       for (const c of cardsToPlay.slice(1)) {
-        if (c.color !== fc && c.value !== fv) {
-          return { ok: false, message: "一次只能打出颜色或数字相同的成组牌", won: false };
+        // 成组必须同色：即使数字相同，颜色不同也不能成一堆甩出（如底牌黄1，禁止蓝1+红1同组）
+        if (c.color !== fc) {
+          return { ok: false, message: "成组出牌必须同色（不能仅数字相同凑一组）", won: false };
         }
       }
       // 功能牌类型隔离：组内不能同时包含 +2 和 +4（+2 只能成组 +2，+4 只能成组 +4）
