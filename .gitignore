@@ -1,3 +1,8 @@
 /com.operit.uno.toolpkg
 /autopush.bat
-dist/
+dist/store.js
+dist/main.js
+dist/game.js
+dist/config.js
+dist/ui/uno.ui.js
+dist/ui/uno_settings.ui.js
