@@ -114,11 +114,14 @@ export function shuffle<T>(arr: T[]): T[] {
 // ---------- 新建游戏 ----------
 export function newGameState(gameId: string, firstTurn?: "ai" | "user", rules?: UnoRules): UnoGameState {
   let deck = shuffle(makeDeck());
-  // 打出首张非 wild 牌，避免开局颜色为 wild 出问题
+  // 开局首牌按 Mattel 官方规则：
+  // - 翻到 +4(wild4) → 放回洗牌重翻（跳过找下一张非 +4）
+  // - 翻到 wild → 允许开局，由先手选色开始（不跳过）
+  // - 翻到 +2/skip/reverse → 效果立即生效，由先手承担
   let starter: Card | null = null;
   let starterIdx = -1;
   for (let i = 0; i < deck.length; i++) {
-    if (deck[i].color !== "wild") { starter = deck[i]; starterIdx = i; break; }
+    if (deck[i].value !== "wild4") { starter = deck[i]; starterIdx = i; break; }
   }
   if (!starter) throw new Error("无法初始化牌堆");
   deck.splice(starterIdx, 1);
@@ -129,6 +132,42 @@ export function newGameState(gameId: string, firstTurn?: "ai" | "user", rules?: 
 
   let ft = firstTurn;
   if (!ft) ft = Math.random() < 0.5 ? "ai" : "user";
+  const opponent: "ai" | "user" = ft === "ai" ? "user" : "ai";
+
+  // 生效色：wild 开局由先手选色（自动优先先手手牌最多的颜色，与出 wild 时逻辑一致）
+  let activeColor: Color;
+  if (starter.color === "wild") {
+    const counts: Record<Color, number> = { red: 0, blue: 0, green: 0, yellow: 0 };
+    const ftHand = ft === "ai" ? aiCards : userCards;
+    for (const c of ftHand) if (c.color !== "wild") counts[c.color as Color]++;
+    let best: Color = "red"; let bn = -1;
+    for (const c of Object.keys(counts) as Color[]) { if (counts[c] > bn) { bn = counts[c]; best = c; } }
+    activeColor = bn > 0 ? best : "red";
+  } else {
+    activeColor = starter.color as Color;
+  }
+
+  // 官方规则：首牌是 Action 牌 → 效果立即生效（由先手承担）
+  const history: string[] = ["游戏开始，首张牌为 " + cardLabel(starter) + "，先手：" + (ft === "ai" ? "AI" : "用户")];
+  let currentTurn: "ai" | "user" = ft; // 默认先手出
+  if (starter.value === "draw2") {
+    // 首牌 +2：先手直接抽 2 张并被跳过（官方：直接罚，无需确认）
+    const drew: Card[] = [];
+    for (let i = 0; i < 2; i++) { const c = deck.pop(); if (c) drew.push(c); }
+    const ftCards = ft === "ai" ? aiCards : userCards;
+    for (const c of drew) ftCards.push(c);
+    currentTurn = opponent;
+    history.push("首牌 +2 生效：" + (ft === "ai" ? "AI" : "用户") + " 抽 " + drew.length + " 张并被跳过，由 " + (opponent === "ai" ? "AI" : "用户") + " 先出。");
+  } else if (starter.value === "skip") {
+    currentTurn = opponent;
+    history.push("首牌跳过生效：" + (ft === "ai" ? "AI" : "用户") + " 被跳过，由 " + (opponent === "ai" ? "AI" : "用户") + " 先出。");
+  } else if (starter.value === "reverse") {
+    // 双人局首牌反转：等价于跳过先手（官方：dealer 先出）
+    currentTurn = opponent;
+    history.push("首牌反转生效（双人局视为跳过）：" + (ft === "ai" ? "AI" : "用户") + " 被跳过，由 " + (opponent === "ai" ? "AI" : "用户") + " 先出。");
+  } else if (starter.color === "wild") {
+    history.push("首牌为万能牌，" + (ft === "ai" ? "AI" : "用户") + " 选择 " + colorText(activeColor) + " 色开始。");
+  }
 
   return {
     gameId,
@@ -137,17 +176,17 @@ export function newGameState(gameId: string, firstTurn?: "ai" | "user", rules?: 
     deck,
     pile: [starter],
     players: { ai: aiCards, user: userCards },
-    currentTurn: ft,
+    currentTurn,
     firstTurn: ft,
     direction: 1,
-    activeColor: starter.color as Color,
+    activeColor,
     winner: null,
     winnerAnnounced: false,
-    history: ["游戏开始，首张牌为 " + cardLabel(starter) + "，先手：" + (ft === "ai" ? "AI" : "用户")],
+    history,
     rules: rules ? { ...rules } : defaultRules(),  // 创建时快照规则，后续只从这读
     pendingPenalty: null,
     pendingReveal: null,
-    lastAction: { kind: "none", prevActiveColor: starter.color as Color, source: "user", hadMatch: false },
+    lastAction: { kind: "none", prevActiveColor: activeColor, source: ft, hadMatch: false },
   };
 }
 
@@ -234,19 +273,21 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
   }
 
   // ⚠️ pendingReveal 拦截：存在待确认罚牌时，只能先确认（+2）或确认/质疑（+4）或「接招叠加」，不能随意出牌
+  let isStackCounter = false; // 接招反击标记：罚牌接招时跳过常规牌面校验（合法性已由"与罚牌同类型"保证）
   const rev = state.pendingReveal;
   if (rev) {
     if (rev.target !== who) {
       return { ok: false, message: rev.target === "user" ? "等待用户确认罚牌" : "等待 AI 确认罚牌", won: false };
     }
     // who 是待确认方（被打方）：
-    // 开启 stacking 且本次出的是「与罚牌同类型」→ 放行让下方接招累加处理；否则拦截要求先确认
+    // 开启 stacking 且本次出的全是「与罚牌同类型」→ 放行让下方接招累加处理；否则拦截要求先确认
     const stk = !!(state.rules && state.rules.stacking);
-    const firstCard = cardsToPlay[0];
-    const sameKindPenalty = rev.kind === "draw2"
-      ? firstCard && firstCard.value === "draw2"
-      : firstCard && firstCard.value === "wild4";
-    if (!(stk && sameKindPenalty)) {
+    const sameKindPenalty = cardsToPlay.length > 0 && cardsToPlay.every((c) =>
+      rev.kind === "draw2" ? c.value === "draw2" : c.value === "wild4"
+    );
+    if (stk && sameKindPenalty) {
+      isStackCounter = true;
+    } else {
       return { ok: false, message: rev.challengeAllowed ? "正被罚 +4，可接招同类 +4 反击，或确认/质疑" : "正被罚 +2，可接招同类 +2 反击，或确认罚牌", won: false };
     }
   }
@@ -284,7 +325,8 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
   }
 
   const baseCard = cardsToPlay[0];
-  if (!canPlay(baseCard, state.activeColor, top)) {
+  // 接招反击（stacking）：罚牌合法性已由"与罚牌同类型"保证，跳过常规牌面校验（牌面可能是成组出牌里最后一张普通牌，颜色/数字与 +2/+4 无关）
+  if (!isStackCounter && !canPlay(baseCard, state.activeColor, top)) {
     return { ok: false, message: "所选卡牌不符合当前牌面，无法打出", won: false };
   }
 
@@ -376,13 +418,19 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
     }
     // 预取应罚张数
     const drew = peekDrawN(state, extra);
+    // 牌堆不足（deck 空且 pile 只剩顶牌）时：amount 用实际预取数，保证 UI 按钮/确认文案与实际抽到的一致
+    const actualAmount = drew.length;
+    if (actualAmount < extra) {
+      msg += "（牌堆不足，仅抽到 " + actualAmount + " 张）";
+    }
     if (existingRev && existingRev.kind === kindForReveal && existingRev.target === who) {
       // 接招：累加预取 + 目标切换，保留原已展示的牌（新预取追加）
+      const stackedAmount = existingRev.drawAbles.length + drew.length;
       state.pendingReveal = {
         kind: kindForReveal,
         target: opponent,
         source: who,
-        amount: existingRev.amount + extra,
+        amount: stackedAmount,
         drawAbles: existingRev.drawAbles.concat(drew),
         challengeAllowed: kindForReveal === "wild4",
       };
@@ -395,7 +443,7 @@ export function playCards(state: UnoGameState, who: "ai" | "user", cardIds: stri
     // 首次打罚牌：进 pendingReveal，等被打方确认
     state.pendingReveal = {
       kind: kindForReveal, target: opponent, source: who,
-      amount: extra, drawAbles: drew,
+      amount: actualAmount, drawAbles: drew,
       challengeAllowed: kindForReveal === "wild4",
     };
     state.history.push(msg);
@@ -440,10 +488,11 @@ export function challengeWild4(state: UnoGameState, challenger: "ai" | "user"): 
       state.players[opponent].push(topCard);     // 退回出牌者手牌
     }
     state.activeColor = la.prevActiveColor;      // 生效色还原到出+4前
-    for (let i = 0; i < 4; i++) draw(state, opponent); // 违规者自罚4
+    let drewCount = 0;
+    for (let i = 0; i < 4; i++) { if (draw(state, opponent)) drewCount++; } // 违规者自罚4
     state.pendingReveal = null;
     state.lastAction = { kind: "none", prevActiveColor: state.activeColor, source: challenger, hadMatch: false };
-    const msg = (challenger === "ai" ? "AI" : "用户") + " 质疑成功！" + (opponent === "ai" ? "AI" : "用户") + " 违规出 +4，收回并还原牌面，" + (opponent === "ai" ? "AI" : "用户") + " 自罚抽 4 张。";
+    const msg = (challenger === "ai" ? "AI" : "用户") + " 质疑成功！" + (opponent === "ai" ? "AI" : "用户") + " 违规出 +4，收回并还原牌面，" + (opponent === "ai" ? "AI" : "用户") + " 自罚抽 " + drewCount + " 张" + (drewCount < 4 ? "（牌堆不足）" : "") + "。";
     state.history.push(msg);
     state.currentTurn = challenger;
     state.updated = Date.now();
@@ -452,10 +501,11 @@ export function challengeWild4(state: UnoGameState, challenger: "ai" | "user"): 
     // 质疑失败：challenger 保留预取的 4 张 + 再罚抽 2 张 = 共 6 张
     const preAll = (state.pendingReveal && state.pendingReveal.drawAbles) || [];
     for (const c of preAll) state.players[challenger].push(c); // 原预取4张加入
-    for (let i = 0; i < 2; i++) draw(state, challenger);        // 再罚2张
+    let extraDrew = 0;
+    for (let i = 0; i < 2; i++) { if (draw(state, challenger)) extraDrew++; } // 再罚2张
     state.pendingReveal = null;
     state.lastAction = { kind: "none", prevActiveColor: state.activeColor, source: challenger, hadMatch: false };
-    const msg = (challenger === "ai" ? "AI" : "用户") + " 质疑失败（对方确实无同色牌），" + (challenger === "ai" ? "AI" : "用户") + " 罚抽 6 张（原4张 + 额外2张）。";
+    const msg = (challenger === "ai" ? "AI" : "用户") + " 质疑失败（对方确实无同色牌），" + (challenger === "ai" ? "AI" : "用户") + " 罚抽 " + (preAll.length + extraDrew) + " 张（原" + preAll.length + "张 + 额外" + extraDrew + "张" + (extraDrew < 2 ? "，牌堆不足" : "") + "）。";
     state.history.push(msg);
     state.currentTurn = opponent;
     state.updated = Date.now();
@@ -495,7 +545,9 @@ export function abandonTurn(state: UnoGameState, who: "ai" | "user"): { ok: bool
 
   // 正常弃牌：抽 1 张
   const drawn = draw(state, who);
-  let msg = whoName + " 放弃出牌，抽了 1 张";
+  let msg = drawn
+    ? whoName + " 放弃出牌，抽了 1 张"
+    : whoName + " 放弃出牌，但牌堆已空，无法抽牌";
   if (drawn && canPlay(drawn, state.activeColor, top)) {
     msg += "（抽到可出的牌：" + cardLabel(drawn) + "，可以选择打出）";
   }

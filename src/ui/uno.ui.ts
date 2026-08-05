@@ -47,12 +47,12 @@ function _pickColor(hand: any[], fallback: any): any {
 function _drawOne(st: any, who: string): any {
   if (st.deck.length === 0) {
     if (st.pile.length <= 1) return null;
-    var t = st.pile.pop();
+    var t = st.pile.pop();           // 先取顶牌
+    var rest = st.pile.slice();      // 剩余弃牌堆（不含顶牌）——必须先取剩余再洗，否则只剩顶牌一张，其余牌全丢
+    // 洗牌（Fisher-Yates）
+    for (var i = rest.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var tmp = rest[i]; rest[i] = rest[j]; rest[j] = tmp; }
     st.pile = [t];
-    // 洗牌
-    var a = st.pile.slice();
-    for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var tmp = a[i]; a[i] = a[j]; a[j] = tmp; }
-    st.deck = a;
+    st.deck = rest;
   }
   var c = st.deck.pop();
   if (!c) return null;
@@ -71,6 +71,12 @@ var attachMsgState = ctx.useState("_attachMsg", "");
   var chosenState = ctx.useState("_chosen", "{}");
   // abd 中间态：记录用户放弃后抽到的牌（仅用户可见，点"继续"后才发消息、明牌不出）
   var abandonDrawnState = ctx.useState("_abandonDrawn", "null");
+  // 罚牌确认后展示：确认后才允许看抽到的牌（确认前不展示预取牌，防透视）
+  var revealedCardsState = ctx.useState("_revealedCards", "");
+  // 追加罚牌（接招反击）完成中间态：接招后展示"追加完成"反馈，点"继续"进入等待 AI
+  var stackDoneState = ctx.useState("_stackDone", "");
+  // 待发送消息：罚牌操作（确认/追加/质疑）完成后暂存，完成页点"继续"才真正发给 AI
+  var pendingSendState = ctx.useState("_pendingSend", "");
   // 万能牌选色中间态：记录待出的牌 + 是否在选色（可取消返回）
   var wildPickState = ctx.useState("_wildPick", "null");
   // 选色中间态里当前选中的颜色（单选，点"确认"才生效）
@@ -102,6 +108,14 @@ var attachMsgState = ctx.useState("_attachMsg", "");
   var abandonDrawn: any = null;
   try { var ad = JSON.parse(abandonDrawnState[0] || "null"); abandonDrawn = ad ? ad : null; } catch (e) { abandonDrawn = null; }
   var isAbandoning = !!abandonDrawn; // 是否处于"已抽牌待继续"中间态
+  // 罚牌确认后展示：确认后才允许看抽到的牌
+  var revealedCards: any = null;
+  try { var rc = JSON.parse(revealedCardsState[0] || ""); revealedCards = rc && rc.length > 0 ? rc : null; } catch (e) { revealedCards = null; }
+  // 追加罚牌完成中间态信息
+  var stackDone: any = null;
+  try { var sd = JSON.parse(stackDoneState[0] || ""); stackDone = sd ? sd : null; } catch (e) { stackDone = null; }
+  // 待发送消息（罚牌操作完成后暂存，完成页点"继续"才发）
+  var pendingSendMsg = String(pendingSendState[0] || "").trim();
   // 万能牌选色中间态
   var wildPick: any = null;
   try { var wp = JSON.parse(wildPickState[0] || "null"); wildPick = wp ? wp : null; } catch (e) { wildPick = null; }
@@ -139,6 +153,28 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       attachMsgState[1]("");
     }
     try { await Tools.Chat.sendMessage(msg, chatId, undefined, undefined, { runtime: "main" }); } catch (e) {}
+  }
+
+  // 完成页"继续"：若存在待发送消息（罚牌操作暂存的），此时才真正发送给 AI
+  function flushPendingSend() {
+    var pending = String(pendingSendState[0] || "").trim();
+    if (pending) {
+      saveResult(pending);
+      pendingSendState[1]("");
+    }
+  }
+
+  // 同步本地 game 快照：结算写回文件后调用，让 UI 立即反映新状态。
+  // 否则确认罚牌/接招后，旧快照里的 pendingReveal 还在，isUserPenalized 仍为 true，
+  // 确认罚牌分支会抢先 return，"已确认"模态页永远显示不出来。
+  function syncLocalGame(st: any) {
+    try {
+      var d: any = {};
+      try { d = JSON.parse(dataState[0] || "{}"); } catch (e) { d = {}; }
+      if (st) d.game = JSON.stringify(st);
+      d.gameLoaded = true;
+      dataState[1](JSON.stringify(d));
+    } catch (e) {}
   }
 
   // 出牌：读最新 json（只此一处异步读，且是用户主动操作，非首次渲染）
@@ -181,10 +217,11 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     var r = unoGame.playCards(st, "user", chosenIds);
     if (!r.ok) { errorMsgState[1](r.message); return; }
     await ctx.callTool("write_file", { path: path, content: JSON.stringify(st) }).catch(function(){});
+    syncLocalGame(st); // 同步本地快照，立即反映最新手牌/牌面
     chosenState[1]("{}");
     submittedState[1](true); // 出牌完成 → 进入"已出牌"模态页
-    // 若进入 pendingPenalty（用户打了罚牌，AI 手中有同类可接招）→ 不发 UNO，保持 UI 让 AI/用户继续
-    if (r.pendingPenalty) {
+    // 若进入 pendingReveal（用户打了罚牌，AI 手中有同类可接招）→ 不发 UNO，保持 UI 让 AI/用户继续
+    if (r.pendingReveal) {
       submittedState[1](true);
       resultMsgState[1](r.message);
       await saveResult(r.message);
@@ -218,11 +255,12 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       errorMsgState[1]("当前不在你的回合或游戏已结束。");
       return;
     }
-    // 是否认罚（存在针对用户的 pendingPenalty）
-    var isPenalty = !!(st.pendingPenalty && st.pendingPenalty.target === "user");
+    // 是否认罚（存在针对用户的 pendingReveal——注意是 pendingReveal，不是 pendingPenalty；罚牌状态统一由 pendingReveal 承载）
+    var isPenalty = !!(st.pendingReveal && st.pendingReveal.target === "user");
     var beforeHand = (st.players.user || []).length;
     var r = unoGame.abandonTurn(st, "user"); // 统一结算（含认罚抽累计）
     await ctx.callTool("write_file", { path: path, content: JSON.stringify(st) }).catch(function(){});
+    syncLocalGame(st); // 同步本地快照（含认罚后手牌/普通抽牌后手牌）
     chosenState[1]("{}");
     if (isPenalty) {
       // 认罚：抽累计张数，不进单张展示，直接提示
@@ -263,6 +301,7 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     }
     errorMsgState[1]("");
     var ids = wildPick.ids;
+    var mode = wildPick.mode || "play"; // play=普通出万能牌 / stack=追加+4反击
     var path = "/storage/emulated/0/Download/Operit/cleanOnExit/uno/" + gameId + ".json";
     var st: any = { players: { ai: [], user: [] }, pile: [], deck: [], activeColor: "", currentTurn: "user", winner: null };
     try {
@@ -280,15 +319,41 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       wildColorState[1]("");
       return;
     }
-    // 用选定颜色结算（调 game.js）
+    // ⭐ 追加 +4 反击：选色确认后执行接招（校验仍是待确认方 + 同类罚牌 + stacking）
+    if (mode === "stack") {
+      var revPending = st.pendingReveal;
+      if (!revPending || revPending.target !== "user") { errorMsgState[1]("当前不是待确认罚牌状态"); wildPickState[1]("null"); wildColorState[1](""); return; }
+      if (!st.rules || !st.rules.stacking) { errorMsgState[1]("未开启叠加规则，无法接招"); wildPickState[1]("null"); wildColorState[1](""); return; }
+      var sc = (st.players.user || []).find(function (h: any) { return h.id === ids[0]; });
+      if (!sc || sc.value !== "wild4") { errorMsgState[1]("只能接招「同类 +4」"); wildPickState[1]("null"); wildColorState[1](""); return; }
+      var r = unoGame.playCards(st, "user", ids, color);
+      if (!r.ok) { errorMsgState[1](r.message); wildPickState[1]("null"); wildColorState[1](""); return; }
+      await ctx.callTool("write_file", { path: path, content: JSON.stringify(st) }).catch(function(){});
+      syncLocalGame(st);
+      wildPickState[1]("null");
+      wildColorState[1]("");
+      chosenState[1]("{}");
+      submittedState[1](true);
+      resultMsgState[1](r.message);
+      var newRev = st.pendingReveal;
+      stackDoneState[1](JSON.stringify({
+        amount: newRev && newRev.amount ? newRev.amount : 0,
+        target: newRev && newRev.target ? newRev.target : "ai",
+        kind: "wild4",
+      }));
+      pendingSendState[1](r.message); // 暂不发消息，完成页点"继续"才发送
+      return;
+    }
+    // 用选定颜色结算（调 game.js）——普通万能牌出牌
     var r = unoGame.playCards(st, "user", ids, color);
     if (!r.ok) { errorMsgState[1](r.message); wildPickState[1]("null"); wildColorState[1](""); return; }
     try { await ctx.callTool("write_file", { path: path, content: JSON.stringify(st) }); } catch (e) {}
+    syncLocalGame(st); // 万能牌出牌后同步快照
     wildPickState[1]("null");
     wildColorState[1]("");
     chosenState[1]("{}");
     submittedState[1](true);
-    // 若进入 pendingPenalty，保持提示
+    // 若进入 pendingReveal，保持提示
     var sentMsg = r.message + (r.won ? " 用户赢了！" : "");
     if (!r.won && st.players.user.length === 1) { sentMsg += "  UNO!"; }
     resultMsgState[1](sentMsg);
@@ -303,7 +368,7 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     errorMsgState[1]("");
   }
 
-  // 用户确认罚牌（+2/+4）：确认后预取牌加入并继续
+  // 用户确认罚牌（+2/+4）：确认后才允许看抽到的牌（确认前不展示预取牌，防透视）
   async function confirmReveal() {
     if (!isUserPenalized) return;
     errorMsgState[1]("");
@@ -319,12 +384,17 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       }
     } catch (e) {}
     if (!st.pendingReveal || st.pendingReveal.target !== "user") return;
+    // 确认前先取出预取牌（确认后展示用，此时用户还没看到）
+    var revPending = st.pendingReveal;
+    var drawnCards = (revPending.drawAbles || []).slice();
     var r = unoGame.acceptReveal(st, "user");
     if (!r.ok) { errorMsgState[1](r.message); return; }
     await ctx.callTool("write_file", { path: path, content: JSON.stringify(st) }).catch(function(){});
+    syncLocalGame(st); // ⭐ 关键：清掉快照里的 pendingReveal，否则"已确认"模态页被确认页抢先
     submittedState[1](true);
     resultMsgState[1](r.message);
-    await saveResult(r.message);
+    revealedCardsState[1](JSON.stringify(drawnCards)); // 确认后才允许看抽到的牌
+    pendingSendState[1](r.message); // 暂不发消息，完成页点"继续"才发送
   }
 
   // 用户接招叠加：用手里同类 +2/+4 反击（需开启 stacking，且与罚牌同类型）
@@ -350,12 +420,27 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     if (!c) { errorMsgState[1]("卡牌不存在"); return; }
     var sameKind = revPending.kind === "draw2" ? c.value === "draw2" : c.value === "wild4";
     if (!sameKind) { errorMsgState[1]("只能接招「同类罚牌」"); return; }
+    // ⭐ +4 接招必须选生效颜色：先进入选色中间态（mode=stack），确认颜色后才真正出牌
+    if (c.value === "wild4") {
+      wildPickState[1](JSON.stringify({ ids: [cardId], mode: "stack" }));
+      wildColorState[1]("");
+      errorMsgState[1]("");
+      return;
+    }
     var r = unoGame.playCards(st, "user", [cardId]);
     if (!r.ok) { errorMsgState[1](r.message); return; }
     await ctx.callTool("write_file", { path: path, content: JSON.stringify(st) }).catch(function(){});
+    syncLocalGame(st); // ⭐ 关键：接招后罚牌已甩回，清快照里的 pendingReveal，避免仍显示确认页
     submittedState[1](true);
     resultMsgState[1](r.message);
-    await saveResult(r.message);
+    // 追加罚牌完成中间态：记录累加信息和甩回对象，展示"追加完成"模态页
+    var newRev = st.pendingReveal;
+    stackDoneState[1](JSON.stringify({
+      amount: newRev && newRev.amount ? newRev.amount : 0,
+      target: newRev && newRev.target ? newRev.target : "ai",
+      kind: newRev && newRev.kind ? newRev.kind : revPending.kind,
+    }));
+    pendingSendState[1](r.message); // 暂不发消息，完成页点"继续"才发送
   }
 
   // 用户质疑：仅当上一步是 AI 刚出 +4 时可质疑
@@ -382,9 +467,10 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     var r = unoGame.challengeWild4(st, "user");
     if (!r.ok) { errorMsgState[1](r.message); return; }
     await ctx.callTool("write_file", { path: path, content: JSON.stringify(st) }).catch(function(){});
+    syncLocalGame(st); // 质疑后同步快照（还原牌面/手牌变化）
     submittedState[1](true);
     resultMsgState[1](r.message);
-    await saveResult(r.message);
+    pendingSendState[1](r.message); // 暂不发消息，完成页点"继续"才发送
   }
 
   function localPlay(st: any, ids: string[], chosenColor?: string) {
@@ -536,25 +622,7 @@ var attachMsgState = ctx.useState("_attachMsg", "");
         else if (pending.kind === "wild4" && sc.value === "wild4") stackable.push(sc);
       }
     }
-    // 展示预取的罚牌
-    var revealCards: any[] = [];
-    var drawAbles = pending.drawAbles || [];
-    for (var ri = 0; ri < drawAbles.length; ri++) {
-      var rc = drawAbles[ri];
-      var rHex = _colorHex(rc.color);
-      (function (card) {
-        revealCards.push(ctx.UI.OutlinedCard({
-          key: "rev_" + card.id,
-          containerColor: _parseHex(rHex, 0.15),
-          contentColor: _parseHex(rHex, 0.95),
-          border: { width: 2, color: _parseHex(rHex, 0.9) },
-          shape: { type: "rounded", cornerRadius: 8 },
-          content: ctx.UI.Column({ spacing: 0, horizontalAlignment: "centerHorizontally", verticalArrangement: "center", width: 52, height: 70 }, [
-            ctx.UI.Text({ text: _cardLabel(card), style: "titleSmall", color: _parseHex(rHex, 0.95), textAlign: "center" }),
-          ]),
-        }));
-      })(rc);
-    }
+    // ⭐ 确认前不展示预取牌：防止提前透视罚牌内容，确认后才允许看抽到的牌
     // 叠加按钮（可能多张，用 LazyRow 横向滚动包裹，避免按钮过多撑爆）
     var stackBtn: any = null;
     if (stackable.length > 0) {
@@ -582,9 +650,8 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       ]),
       ctx.UI.Column({ spacing: 8, padding: { vertical: 8 } }, [
         ctx.UI.Text({ text: (pending.source === "ai" ? "AI" : "用户") + " 打出了" + penKindLabel + "，你被罚抽 " + pending.amount + " 张", style: "titleMedium", color: errorColor }),
-        ctx.UI.Text({ text: "以下是你将抽到的牌（仅你可看）：", style: "bodySmall", color: onSurfaceVariant }),
+        ctx.UI.Text({ text: "确认前不可查看罚牌，点击「确认」后即可查看抽到的牌。", style: "bodySmall", color: onSurfaceVariant }),
       ]),
-      ctx.UI.LazyRow({ spacing: 6, padding: { vertical: 6 } }, revealCards),
       stackBtn,
     renderAttachBox(),
     ctx.UI.Row({ spacing: 8, verticalAlignment: "centerVertically", padding: { vertical: 6 } }, [
@@ -606,6 +673,7 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       var wf = myHand.find(function (h: any) { return h.id === wildIds[0]; });
       if (wf) wildCardLabel = _cardLabel(wf);
     }
+    var wildMode = (wildPick && wildPick.mode) || "play";
     // 颜色选项（FilterChip 单选，选中高亮文字色）
     var wildColorOpts = [["red", "红"], ["blue", "蓝"], ["green", "绿"], ["yellow", "黄"]];
     var colorChips: any[] = [];
@@ -623,11 +691,11 @@ var attachMsgState = ctx.useState("_attachMsg", "");
       })(colOpt, labOpt, isSel, chipHex);
     }
     nodes.push(ctx.UI.Column({ spacing: 10, padding: { vertical: 8, horizontal: 12 } }, [
-      ctx.UI.Text({ text: "出万能牌「" + wildCardLabel + "」，请选择生效颜色", style: "titleMedium", color: primary }),
+      ctx.UI.Text({ text: (wildMode === "stack" ? "追加 +4「" + wildCardLabel + "」反击，请选择生效颜色" : "出万能牌「" + wildCardLabel + "」，请选择生效颜色"), style: "titleMedium", color: primary }),
       ctx.UI.Row({ spacing: 8, horizontalArrangement: "spaceBetween" }, colorChips),
       ctx.UI.Text({ text: "先选中一个颜色，再点「确认出牌」；也可取消返回重新选牌。", style: "bodySmall", color: onSurfaceVariant }),
       ctx.UI.Row({ spacing: 8, padding: { vertical: 6 } }, [
-        ctx.UI.Button({ text: "确认出牌", onClick: confirmWildColor, containerColor: primary, enabled: !!wildColor }),
+        ctx.UI.Button({ text: (wildMode === "stack" ? "确认追加" : "确认出牌"), onClick: confirmWildColor, containerColor: primary, enabled: !!wildColor }),
         ctx.UI.OutlinedButton({
           content: ctx.UI.Text({ text: "取消", style: "labelLarge", color: errorColor }),
           onClick: cancelWildPick,
@@ -662,6 +730,51 @@ var attachMsgState = ctx.useState("_attachMsg", "");
     return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
   }
 
+  // 罚牌确认后展示：确认后才允许看抽到的牌（仅用户可见，点"继续"进入等待 AI）
+  if (revealedCards) {
+    var rvNodes: any[] = [];
+    for (var rvi = 0; rvi < revealedCards.length; rvi++) {
+      (function (card) {
+        var rvHex = _colorHex(card.color);
+        rvNodes.push(ctx.UI.OutlinedCard({
+          key: "revealed_" + card.id,
+          containerColor: _parseHex(rvHex, 0.15),
+          contentColor: _parseHex(rvHex, 0.95),
+          border: { width: 2, color: _parseHex(rvHex, 0.9) },
+          shape: { type: "rounded", cornerRadius: 8 },
+          content: ctx.UI.Column({ spacing: 0, horizontalAlignment: "centerHorizontally", verticalArrangement: "center", width: 56, height: 74 }, [
+            ctx.UI.Text({ text: _cardLabel(card), style: "titleSmall", color: _parseHex(rvHex, 0.95), textAlign: "center" }),
+          ]),
+        }));
+      })(revealedCards[rvi]);
+    }
+    nodes.push(ctx.UI.Column({ spacing: 8, padding: { vertical: 8, horizontal: 12 } }, [
+      ctx.UI.Text({ text: "你确认罚牌，抽到了这些牌（仅你可看）", style: "titleMedium", color: primary }),
+      ctx.UI.LazyRow({ spacing: 6, padding: { vertical: 6 } }, rvNodes),
+      ctx.UI.Text({ text: "已确认罚牌，本回合结束，等待 AI 出牌。", style: "bodySmall", color: onSurfaceVariant }),
+      ctx.UI.Button({ text: "继续", onClick: function () { revealedCardsState[1](""); flushPendingSend(); }, containerColor: primary }),
+    ]));
+    return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
+  }
+
+  // 追加罚牌（接招反击）完成模态页：展示罚抽累加结果，点"继续"进入等待 AI
+  if (stackDone) {
+    var sdKind = stackDone.kind === "draw2" ? "+2" : "+4";
+    var sdTarget = stackDone.target === "ai" ? "AI" : "用户";
+    nodes.push(ctx.UI.Column({ spacing: 10, padding: { vertical: 8, horizontal: 12 } }, [
+      ctx.UI.Row({ spacing: 6, verticalAlignment: "centerVertically" }, [
+        ctx.UI.Icon({ name: "bolt", size: 22, tint: primary }),
+        ctx.UI.Text({ text: "追加罚牌完成", style: "titleMedium", color: primary }),
+      ]),
+      ctx.UI.Column({ spacing: 4 }, [
+        ctx.UI.Text({ text: "你用同类 " + sdKind + " 接招反击，罚抽累加至 " + stackDone.amount + " 张", style: "bodyLarge", color: onSurface }),
+        ctx.UI.Text({ text: "罚牌已甩回" + sdTarget + "，等待" + sdTarget + "确认或接招。", style: "bodyMedium", color: onSurfaceVariant }),
+      ]),
+      ctx.UI.Button({ text: "继续", onClick: function () { stackDoneState[1](""); flushPendingSend(); }, containerColor: primary }),
+    ]));
+    return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);
+  }
+
   // 已出牌：出牌后优先展示（即使 currentTurn 已变）
   if (submitted) {
 nodes.push(ctx.UI.Column({ spacing: 4 }, [
@@ -670,6 +783,8 @@ nodes.push(ctx.UI.Column({ spacing: 4 }, [
     ctx.UI.Text({ text: "已出牌", style: "titleMedium", color: primary }),
   ]),
   resultMsg ? ctx.UI.Text({ text: resultMsg, style: "bodyMedium", color: onSurface }) : null,
+  // 质疑落入通用 submitted 页：存在待发送消息时，需点"继续"才发给 AI
+  pendingSendMsg ? ctx.UI.Button({ text: "继续", onClick: flushPendingSend, containerColor: primary }) : null,
   ctx.UI.Text({ text: "本回合结束，等待 AI 出牌...", style: "bodySmall", color: onSurfaceVariant }),
 ]));
 return ctx.UI.Column({ spacing: 8, padding: { vertical: 12, horizontal: 12 } }, nodes);

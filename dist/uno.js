@@ -45,24 +45,8 @@
         "en": "Start a new UNO game instance. Deals a random deck, 7 cards each to AI and user, and randomly decides who goes first. Returns game state and whose turn it is."
       },
       "parameters": [
-        {
-          "name": "gameId",
-          "description": {
-            "zh": "游戏实例 ID（唯一标识）",
-            "en": "Game instance ID (unique)"
-          },
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "firstTurn",
-          "description": {
-            "zh": "可选：指定先手（ai 或 user），不填则随机",
-            "en": "Optional: specify first turn (ai or user); random if omitted"
-          },
-          "type": "string",
-          "required": false
-        }
+        { "name": "gameId", "description": { "zh": "游戏实例 ID（唯一标识）", "en": "Game instance ID (unique)" }, "type": "string", "required": true },
+        { "name": "firstTurn", "description": { "zh": "可选：指定先手（ai 或 user），不填则随机", "en": "Optional: specify first turn (ai or user); random if omitted" }, "type": "string", "required": false }
       ]
     },
     {
@@ -72,33 +56,9 @@
         "en": "Play the AI's own cards. Pass an array of card ids to play. Only valid on the AI's turn. Automatically resolves effects (+2/+4 draw penalty, skip, reverse, etc)."
       },
       "parameters": [
-        {
-          "name": "gameId",
-          "description": {
-            "zh": "游戏实例 ID",
-            "en": "Game instance ID"
-          },
-          "type": "string",
-          "required": true
-        },
-        {
-          "name": "cards",
-          "description": {
-            "zh": "要打出的卡牌 id 数组（可一次打出颜色或数字相同的成组牌）",
-            "en": "Array of card ids to play (multiple allowed if same color or value)"
-          },
-          "type": "array",
-          "required": true
-        },
-        {
-          "name": "color",
-          "description": {
-            "zh": "可选：当打出万能牌(wild)时指定生效颜色 red/blue/green/yellow",
-            "en": "Optional: when playing a wild card, specify active color red/blue/green/yellow"
-          },
-          "type": "string",
-          "required": false
-        }
+        { "name": "gameId", "description": { "zh": "游戏实例 ID", "en": "Game instance ID" }, "type": "string", "required": true },
+        { "name": "cards", "description": { "zh": "要打出的卡牌 id 数组（可一次打出颜色或数字相同的成组牌）", "en": "Array of card ids to play (multiple allowed if same color or value)" }, "type": "array", "required": true },
+        { "name": "color", "description": { "zh": "可选：当打出万能牌(wild)时指定生效颜色 red/blue/green/yellow", "en": "Optional: when playing a wild card, specify active color red/blue/green/yellow" }, "type": "string", "required": false }
       ]
     },
     {
@@ -116,15 +76,7 @@
         "en": "Get full info of a game instance: the AI's own hand, current active card, active color, and whose turn it is. For the AI to decide its next move."
       },
       "parameters": [
-        {
-          "name": "gameId",
-          "description": {
-            "zh": "游戏实例 ID",
-            "en": "Game instance ID"
-          },
-          "type": "string",
-          "required": true
-        }
+        { "name": "gameId", "description": { "zh": "游戏实例 ID", "en": "Game instance ID" }, "type": "string", "required": true }
       ]
     },
     {
@@ -134,15 +86,7 @@
         "en": "AI abandons this turn and draws 1 card from the draw pile (if the drawn card is playable, it is noted). Only valid on the AI's turn."
       },
       "parameters": [
-        {
-          "name": "gameId",
-          "description": {
-            "zh": "游戏实例 ID",
-            "en": "Game instance ID"
-          },
-          "type": "string",
-          "required": true
-        }
+        { "name": "gameId", "description": { "zh": "游戏实例 ID", "en": "Game instance ID" }, "type": "string", "required": true }
       ]
     },
     {
@@ -152,15 +96,7 @@
         "en": "Terminate (delete) a UNO game instance."
       },
       "parameters": [
-        {
-          "name": "gameId",
-          "description": {
-            "zh": "游戏实例 ID",
-            "en": "Game instance ID"
-          },
-          "type": "string",
-          "required": true
-        }
+        { "name": "gameId", "description": { "zh": "游戏实例 ID", "en": "Game instance ID" }, "type": "string", "required": true }
       ]
     },
     {
@@ -186,56 +122,21 @@
         "en": "Challenge (only when opponent just played +4): dispute an illegal wild4. If upheld, opponent draws 4; if failed, challenger draws 4."
       },
       "parameters": [
-        {
-          "name": "gameId",
-          "description": {
-            "zh": "游戏实例 ID",
-            "en": "Game instance ID"
-          },
-          "type": "string",
-          "required": true
-        }
+        { "name": "gameId", "description": { "zh": "游戏实例 ID", "en": "Game instance ID" }, "type": "string", "required": true }
       ]
     },
-    {
-      "name": "querywild4",
-      "description": {
-        "zh": "查询当前待确认的 +4 罚牌（对方刚出了 +4）：返回你将被罚抽的 4 张牌。AI 被 +4 时用。",
-        "en": "Query the 4 penalty cards for a pending +4."
-      },
-      "parameters": [
-        {
-          "name": "gameId",
-          "description": {
-            "zh": "游戏实例 ID",
-            "en": "Game instance ID"
-          },
-          "type": "string",
-          "required": true
-        }
-      ]
+  {
+    "name": "accept",
+    "description": {
+      "zh": "确认接受罚牌（对方刚出了 +2/+4，你被打罚抽）。确认后罚牌加入你手牌并跳过。accept 前可先 challenge（仅 +4）。",
+      "en": "Accept the penalty cards (+2/+4) and draw them."
     },
-    {
-      "name": "accept",
-      "description": {
-        "zh": "确认接受 +4 罚牌（对方刚出了 +4，你被打罚抽4）。确认后 4 张加入你手牌并跳过。accept 前可先 querywild4 或 challenge。",
-        "en": "Accept the +4 penalty cards and draw 4."
-      },
-      "parameters": [
-        {
-          "name": "gameId",
-          "description": {
-            "zh": "游戏实例 ID",
-            "en": "Game instance ID"
-          },
-          "type": "string",
-          "required": true
-        }
-      ]
-    }
+    "parameters": [
+      { "name": "gameId", "description": { "zh": "游戏实例 ID", "en": "Game instance ID" }, "type": "string", "required": true }
+    ]
+  }
   ]
-}
-*/
+}*/
 var store = require("./store");
 var game = require("./game");
 var config = require("./config");
@@ -376,16 +277,6 @@ async function getconfig() {
   return { success: true, singleOnly: rules.singleOnly, stacking: rules.stacking, requireUno: rules.requireUno, description: config.rulesToDescription(rules) };
 }
 
-async function querywild4(params) {
-  var res = await store.loadGame(String(params.gameId || "").trim());
-  if (!res) return { success: false, message: "游戏实例不存在: " + params.gameId };
-  var rev = res.pendingReveal;
-  if (!rev || rev.kind !== "wild4" || rev.target !== "ai") {
-    return { success: false, message: "当前没有待 AI 确认的 +4 罚牌" };
-  }
-  return { success: true, kind: "wild4", source: rev.source, drawAbles: rev.drawAbles || [], amount: rev.amount, message: "你被罚的4张牌如上，可用 accept 确认，或 challenge 质疑。" };
-}
-
 async function accept(params) {
   var res = await store.loadGame(String(params.gameId || "").trim());
   if (!res) return { success: false, message: "游戏实例不存在: " + params.gameId };
@@ -432,7 +323,6 @@ exports.abd = wrap(abd);
 exports.stop = wrap(stop);
 exports.getconfig = wrap(getconfig);
 exports.challenge = wrap(challenge);
-exports.querywild4 = wrap(querywild4);
 exports.accept = wrap(accept);
 exports.guide = wrap(async function () {
   return { success: false, message: "无需调用此工具，直接输出 <uno> 标签触发界面" };
